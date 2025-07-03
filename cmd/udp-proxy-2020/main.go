@@ -33,6 +33,7 @@ type CLI struct {
 	ListInterfaces bool     `kong:"help='List available interfaces and exit'"`
 	Version        bool     `kong:"short='v',help='Print version information'"`
 	NoListen       bool     `kong:"help='Do not actively listen on UDP port(s)'"`
+	FixedClient []string `kong:"help='Fixed client(s) in format ethX@IP. Can be specified multiple times.'"`
 }
 
 func init() {
@@ -49,6 +50,24 @@ func main() {
 
 	// handle our timeout
 	timeout := parseTimeout(cli.Timeout)
+
+	var fixedClientMap = map[string][]string{}
+	for _, fc := range cli.FixedClient {
+		split := strings.Split(fc, "@")
+		if len(split) != 2 {
+			log.Fatalf("--fixed-client %s is not in format <interface>@<ip>", fc)
+		}
+		iface := split[0]
+		ip := split[1]
+
+		if net.ParseIP(ip) == nil {
+			log.Fatalf("--fixed-client %s: %s is not a valid IP address", fc, ip)
+		}
+		if !stringInSlice(iface, cli.Interface) {
+			log.Fatalf("--fixed-client: interface %s not listed in --interface", iface)
+		}
+		fixedClientMap[iface] = append(fixedClientMap[iface], ip)
+	}
 
 	var fixed_ip = map[string][]string{}
 	for _, fip := range cli.FixedIp {
@@ -81,7 +100,7 @@ func main() {
 		}
 
 		var promisc bool = (netif.Flags & net.FlagBroadcast) == 0
-		l := newListener(netif, promisc, false, cli.Port, timeout, fixed_ip[iface])
+		l := newListener(netif, promisc, false, cli.Port, timeout, fixedClientMap[iface])
 		listeners = append(listeners, l)
 	}
 
@@ -92,7 +111,7 @@ func main() {
 			log.WithError(err).Fatalf("Unable to find loopback interface")
 		}
 
-		l := newListener(netif, false, true, cli.Port, timeout, []string{"127.0.0.1"})
+		l := newListener(netif, false, true, cli.Port, timeout, fixedClientMap[netif.Name])
 		listeners = append(listeners, l)
 	}
 

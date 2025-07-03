@@ -41,6 +41,8 @@ type Listen struct {
 	clientTTL time.Duration        // ttl for client cache
 	sendpkt   chan Send            // channel used to receive packets we need to send
 	clients   map[string]time.Time // keep track of clients for non-promisc interfaces
+
+	fixedClient *net.UDPAddr
 }
 
 // List of LayerTypes we support in sendPacket()
@@ -365,10 +367,16 @@ func (l *Listen) sendPacket(sndpkt Send, dstip net.IP, eth layers.Ethernet, loop
 		}
 	case layers.LinkTypeEthernet.String():
 		// build a new ethernet header
+                srcMAC := l.netif.HardwareAddr
+                if len(srcMAC) == 0 {
+                    log.Warnf("%s: HardwareAddr is empty, using fallback MAC", l.iname)
+                    srcMAC = net.HardwareAddr{0x00, 0x00, 0x00, 0x00, 0x00, 0x00}
+                }
+
 		new_eth := layers.Ethernet{
 			BaseLayer:    layers.BaseLayer{},
 			DstMAC:       net.HardwareAddr{0xff, 0xff, 0xff, 0xff, 0xff, 0xff},
-			SrcMAC:       l.netif.HardwareAddr,
+			SrcMAC:       srcMAC,
 			EthernetType: layers.EthernetTypeIPv4,
 		}
 		if err := new_eth.SerializeTo(buffer, opts); err != nil {
