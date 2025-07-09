@@ -51,22 +51,38 @@ func main() {
 	// handle our timeout
 	timeout := parseTimeout(cli.Timeout)
 
-	var fixedClientMap = map[string][]string{}
+	var fixedClientMap = map[string][]*net.IPNet{}
 	for _, fc := range cli.FixedClient {
-		split := strings.Split(fc, "@")
-		if len(split) != 2 {
-			log.Fatalf("--fixed-client %s is not in format <interface>@<ip>", fc)
-		}
-		iface := split[0]
-		ip := split[1]
+            split := strings.Split(fc, "@")
+            if len(split) != 2 {
+                log.Fatalf("--fixed-client %s is not in format <interface>@<ip|cidr>", fc)
+            }
+            iface := split[0]
+            ipOrCidr := split[1]
 
-		if net.ParseIP(ip) == nil {
-			log.Fatalf("--fixed-client %s: %s is not a valid IP address", fc, ip)
-		}
-		if !stringInSlice(iface, cli.Interface) {
-			log.Fatalf("--fixed-client: interface %s not listed in --interface", iface)
-		}
-		fixedClientMap[iface] = append(fixedClientMap[iface], ip)
+            // CIDR形式か単一IPか判定
+            var ipnet *net.IPNet
+            if strings.Contains(ipOrCidr, "/") {
+                // CIDR指定の場合
+                _, parsedNet, err := net.ParseCIDR(ipOrCidr)
+                if err != nil {
+                    log.Fatalf("--fixed-client %s: %s is not a valid CIDR", fc, ipOrCidr)
+                }
+                ipnet = parsedNet
+            } else {
+                // 単一IPの場合
+                ip := net.ParseIP(ipOrCidr)
+                if ip == nil {
+                    log.Fatalf("--fixed-client %s: %s is not a valid IP address", fc, ipOrCidr)
+                }
+                ipnet = &net.IPNet{IP: ip, Mask: net.CIDRMask(32, 32)}
+	    }
+	
+            if !stringInSlice(iface, cli.Interface) {
+                log.Fatalf("--fixed-client: interface %s not listed in --interface", iface)
+            }
+
+            fixedClientMap[iface] = append(fixedClientMap[iface], ipnet)
 	}
 
 	var fixed_ip = map[string][]string{}
@@ -100,7 +116,7 @@ func main() {
 		}
 
 		var promisc bool = (netif.Flags & net.FlagBroadcast) == 0
-		l := newListener(netif, promisc, false, cli.Port, timeout, fixedClientMap[iface])
+		l := newListener(netif, promisc, false, cli.Port, timeout, fixed_ip[iface], fixedClientMap[iface])
 		listeners = append(listeners, l)
 	}
 
@@ -111,7 +127,7 @@ func main() {
 			log.WithError(err).Fatalf("Unable to find loopback interface")
 		}
 
-		l := newListener(netif, false, true, cli.Port, timeout, fixedClientMap[netif.Name])
+		l := newListener(netif, false, true, cli.Port, timeout, fixed_ip[netif.Name], fixedClientMap[netif.Name])
 		listeners = append(listeners, l)
 	}
 

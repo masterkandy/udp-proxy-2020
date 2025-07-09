@@ -43,6 +43,7 @@ type Listen struct {
 	clients   map[string]time.Time // keep track of clients for non-promisc interfaces
 
 	fixedClient *net.UDPAddr
+        FixedClients []*net.IPNet
 }
 
 // List of LayerTypes we support in sendPacket()
@@ -54,7 +55,7 @@ var validLinkTypes = []layers.LinkType{
 }
 
 // Creates a Listen struct for the given interface, promisc mode, udp sniff ports and timeout
-func newListener(netif *net.Interface, promisc, sendOnly bool, ports []int32, to time.Duration, fixed_ip []string) Listen {
+func newListener(netif *net.Interface, promisc, sendOnly bool, ports []int32, to time.Duration, fixed_ip []string, fixedClients []*net.IPNet) Listen {
 	var localip net.IP
 
 	log.Debugf("%s: ifIndex: %d", netif.Name, netif.Index)
@@ -107,6 +108,7 @@ func newListener(netif *net.Interface, promisc, sendOnly bool, ports []int32, to
 		handle:   nil,
 		sendpkt:  make(chan Send, SEND_BUFFER_SIZE),
 		clients:  clients,
+                FixedClients: fixedClients,
 	}
 
 	log.Debugf("Listen: %s", spew.Sdump(new))
@@ -167,6 +169,26 @@ func (l *Listen) handlePackets(s *SendPktFeed, wg *sync.WaitGroup) {
 			if l.sendOnly {
 				continue
 			}
+
+                        ipLayer := packet.Layer(layers.LayerTypeIPv4)
+                        if ipLayer == nil {
+                            log.Debugf("%s: Dropping non-IPv4 packet", l.iname)
+                            continue
+                        }
+                        ip, _ := ipLayer.(*layers.IPv4)
+                        srcIP := ip.SrcIP
+
+                        allowed := false
+                        for _, net := range l.FixedClients {
+                            if net.Contains(srcIP) {
+                                allowed = true
+                                break
+                            }
+                        }
+                        if !allowed {
+                            log.Debugf("%s: Dropping packet from %s (not in FixedClients)", l.iname, srcIP.String())
+                            continue
+                        }
 
 			// is it legit?
 			if packet.NetworkLayer() == nil || packet.TransportLayer() == nil || packet.TransportLayer().LayerType() != layers.LayerTypeUDP {
